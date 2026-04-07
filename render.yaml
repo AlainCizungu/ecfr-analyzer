@@ -1,0 +1,21 @@
+# render.yaml — Render.com deployment blueprint for eCFR Analyzer
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: ecfr-analyzer
+    runtime: docker
+    region: virginia        # closest region to Ashburn / DC
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/status
+
+    # Persistent disk — keeps ecfr.db alive across deploys and restarts
+    # Requires a paid Render plan (which you have)
+    disk:
+      name: ecfr-data
+      mountPath: /data
+      sizeGB: 1
+
+    envVars:
+      - key: DB_PATH
+        value: /data/ecfr.db

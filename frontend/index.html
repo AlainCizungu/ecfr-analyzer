@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>eCFR Federal Regulations Analyzer</title>
+  <style>
+    :root {
+      --blue:   #1a4f8a;
+      --blue2:  #2563a8;
+      --red:    #c0392b;
+      --green:  #1a7a45;
+      --gray:   #f4f6f9;
+      --border: #d0d7de;
+      --text:   #1c2533;
+      --muted:  #5a6577;
+      --white:  #ffffff;
+      --shadow: 0 1px 4px rgba(0,0,0,.10);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--gray);
+           color: var(--text); font-size: 14px; }
+
+    /* ── Header ── */
+    header {
+      background: var(--blue); color: var(--white);
+      padding: 14px 24px; display: flex; align-items: center;
+      justify-content: space-between; gap: 16px;
+    }
+    header h1 { font-size: 1.15rem; font-weight: 700; letter-spacing: .3px; }
+    #status-badge {
+      font-size: .78rem; opacity: .85;
+      background: rgba(255,255,255,.15); padding: 4px 10px; border-radius: 20px;
+    }
+    #refresh-btn {
+      font-size: .78rem; border: 1px solid rgba(255,255,255,.5);
+      background: transparent; color: #fff; padding: 4px 12px;
+      border-radius: 4px; cursor: pointer;
+    }
+    #refresh-btn:hover { background: rgba(255,255,255,.15); }
+
+    /* ── Layout ── */
+    .container { max-width: 1280px; margin: 0 auto; padding: 20px 20px 40px; }
+
+    /* ── Summary cards ── */
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr));
+             gap: 14px; margin-bottom: 22px; }
+    .card { background: var(--white); border: 1px solid var(--border);
+            border-radius: 8px; padding: 16px 18px; box-shadow: var(--shadow); }
+    .card .label { font-size: .72rem; text-transform: uppercase; letter-spacing: .5px;
+                   color: var(--muted); margin-bottom: 4px; }
+    .card .value { font-size: 1.5rem; font-weight: 700; color: var(--blue); }
+    .card .sub   { font-size: .75rem; color: var(--muted); margin-top: 2px; }
+
+    /* ── Panel ── */
+    .panel { background: var(--white); border: 1px solid var(--border);
+             border-radius: 8px; padding: 18px 20px; box-shadow: var(--shadow);
+             margin-bottom: 18px; }
+    .panel h2 { font-size: .9rem; font-weight: 600; margin-bottom: 14px;
+                color: var(--blue); border-bottom: 1px solid var(--border);
+                padding-bottom: 8px; }
+
+    /* ── Table ── */
+    .table-controls { display: flex; gap: 10px; margin-bottom: 12px;
+                      align-items: center; flex-wrap: wrap; }
+    #search { flex: 1; min-width: 200px; padding: 7px 12px;
+              border: 1px solid var(--border); border-radius: 5px;
+              font-size: .85rem; outline: none; }
+    #search:focus { border-color: var(--blue2); box-shadow: 0 0 0 2px rgba(37,99,168,.15); }
+    #sort-select { padding: 7px 10px; border: 1px solid var(--border);
+                   border-radius: 5px; font-size: .85rem; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .83rem; }
+    thead th {
+      text-align: left; padding: 9px 12px;
+      background: var(--gray); border-bottom: 2px solid var(--border);
+      white-space: nowrap; cursor: pointer; user-select: none;
+      color: var(--muted); font-weight: 600; font-size: .72rem;
+      text-transform: uppercase; letter-spacing: .4px;
+    }
+    thead th:hover { color: var(--blue); }
+    thead th .sort-arrow { margin-left: 4px; opacity: .4; }
+    thead th.sorted .sort-arrow { opacity: 1; color: var(--blue); }
+
+    tbody tr { border-bottom: 1px solid var(--border); cursor: pointer;
+               transition: background .1s; }
+    tbody tr:hover { background: #eef3fb; }
+    tbody tr.selected { background: #dce8f8; }
+    tbody td { padding: 9px 12px; }
+    td.agency-name { font-weight: 500; color: var(--text); }
+    td.number { text-align: right; font-variant-numeric: tabular-nums; }
+    td.mono { font-family: monospace; font-size: .78rem; color: var(--muted); }
+
+    .bar-bg { background: #e4eaf2; border-radius: 3px; height: 6px; width: 100px;
+              display: inline-block; vertical-align: middle; margin-right: 8px; }
+    .bar-fill { background: var(--blue2); border-radius: 3px; height: 100%; }
+
+    .badge { display: inline-block; padding: 2px 7px; border-radius: 10px;
+             font-size: .72rem; font-weight: 600; }
+    .badge.up   { background: #fde8e8; color: var(--red); }
+    .badge.down { background: #e6f4ec; color: var(--green); }
+    .badge.flat { background: #f0f0f0; color: var(--muted); }
+
+    /* ── Charts ── */
+    .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+                   margin-bottom: 18px; }
+    @media (max-width: 800px) { .charts-grid { grid-template-columns: 1fr; } }
+    .chart-box { background: var(--white); border: 1px solid var(--border);
+                 border-radius: 8px; padding: 18px 20px; box-shadow: var(--shadow); }
+    .chart-box h2 { font-size: .9rem; font-weight: 600; color: var(--blue);
+                    margin-bottom: 14px; }
+    .chart-canvas { position: relative; height: 300px; }
+
+    /* ── Detail panel ── */
+    #detail { display: none; }
+    #detail h2 { font-size: 1rem; }
+    .metric-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr));
+                   gap: 12px; margin-bottom: 18px; }
+    .metric-box { background: var(--gray); border-radius: 6px; padding: 12px 14px; }
+    .metric-box .m-label { font-size: .7rem; text-transform: uppercase; letter-spacing: .4px;
+                           color: var(--muted); margin-bottom: 3px; }
+    .metric-box .m-value { font-size: 1.1rem; font-weight: 700; color: var(--blue); }
+    .metric-box .m-desc  { font-size: .7rem; color: var(--muted); margin-top: 3px; }
+
+    #detail-history-wrap { height: 220px; position: relative; }
+
+    /* ── Loading / empty ── */
+    .loading { text-align: center; padding: 40px; color: var(--muted); }
+    .spinner { display: inline-block; width: 24px; height: 24px;
+               border: 3px solid var(--border); border-top-color: var(--blue);
+               border-radius: 50%; animation: spin .7s linear infinite;
+               margin-bottom: 10px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .tooltip-info { font-size: .72rem; color: var(--muted); margin-top: 6px; font-style: italic; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>⚖️ eCFR Federal Regulations Analyzer</h1>
+  <div style="display:flex;align-items:center;gap:10px">
+    <span id="status-badge">Loading…</span>
+    <button id="refresh-btn" title="Re-download all eCFR data (takes several minutes)">↻ Refresh Data</button>
+  </div>
+</header>
+
+<div class="container">
+  <!-- Summary cards -->
+  <div class="cards" id="summary-cards">
+    <div class="card"><div class="label">Agencies</div>
+      <div class="value" id="c-agencies">—</div></div>
+    <div class="card"><div class="label">Total Words</div>
+      <div class="value" id="c-words">—</div>
+      <div class="sub">across all regulation text</div></div>
+    <div class="card"><div class="label">Largest Agency</div>
+      <div class="value" id="c-largest" style="font-size:1rem">—</div>
+      <div class="sub" id="c-largest-words"></div></div>
+    <div class="card"><div class="label">Most Volatile</div>
+      <div class="value" id="c-volatile" style="font-size:1rem">—</div>
+      <div class="sub">by Amendment Velocity</div></div>
+  </div>
+
+  <!-- Charts row -->
+  <div class="charts-grid">
+    <div class="chart-box">
+      <h2>Word Count — Top 20 Agencies</h2>
+      <div class="chart-canvas"><canvas id="bar-chart"></canvas></div>
+    </div>
+    <div class="chart-box">
+      <h2>Amendment Velocity — Top 20 Agencies
+        <span style="font-size:.72rem;font-weight:400;color:var(--muted)">
+          (amendments per 1k words/yr)</span>
+      </h2>
+      <div class="chart-canvas"><canvas id="avi-chart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Agency detail (hidden until row clicked) -->
+  <div class="panel" id="detail">
+    <h2 id="detail-title">Agency Detail</h2>
+    <div class="metric-grid" id="detail-metrics"></div>
+    <div style="margin-bottom:10px;font-size:.85rem;font-weight:600;color:var(--muted)">
+      Word Count Over Time</div>
+    <div id="detail-history-wrap"><canvas id="history-chart"></canvas></div>
+    <p class="tooltip-info">Click another agency row to compare, or click the same row to close.</p>
+  </div>
+
+  <!-- Agency table -->
+  <div class="panel">
+    <h2>All Agencies</h2>
+    <div class="table-controls">
+      <input id="search" type="search" placeholder="Filter by agency name…" />
+      <select id="sort-select">
+        <option value="word_count">Sort: Word Count ↓</option>
+        <option value="amendment_velocity">Sort: Amendment Velocity ↓</option>
+        <option value="word_count_growth_pct">Sort: Growth Rate ↓</option>
+        <option value="name">Sort: Name A→Z</option>
+      </select>
+    </div>
+    <div class="table-wrap">
+      <table id="agency-table">
+        <thead>
+          <tr>
+            <th data-col="name">Agency <span class="sort-arrow">↕</span></th>
+            <th data-col="word_count" class="sorted">Words <span class="sort-arrow">↓</span></th>
+            <th data-col="amendment_velocity">Amend. Velocity <span class="sort-arrow">↕</span></th>
+            <th data-col="word_count_growth_pct">Growth % <span class="sort-arrow">↕</span></th>
+            <th>Checksum (SHA-256)</th>
+            <th>Snapshot Date</th>
+          </tr>
+        </thead>
+        <tbody id="table-body">
+          <tr><td colspan="6" class="loading">
+            <div class="spinner"></div><br>Loading data…
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+/* ── State ── */
+let allAgencies = [];
+let filteredAgencies = [];
+let sortCol = 'word_count';
+let sortDir = -1;  // -1 = desc
+let selectedId = null;
+let barChart = null, aviChart = null, historyChart = null;
+
+const fmt = n => n == null ? '—' : Number(n).toLocaleString();
+const fmtPct = v => v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(1) + '%';
+
+/* ── Bootstrap ── */
+async function init() {
+  await loadStatus();
+  await loadAgencies();
+  document.getElementById('refresh-btn').onclick = triggerRefresh;
+  document.getElementById('search').oninput = applyFilter;
+  document.getElementById('sort-select').onchange = e => {
+    sortCol = e.target.value;
+    sortDir = sortCol === 'name' ? 1 : -1;
+    renderTable();
+  };
+  document.querySelectorAll('thead th[data-col]').forEach(th => {
+    th.onclick = () => {
+      const col = th.dataset.col;
+      if (sortCol === col) { sortDir *= -1; }
+      else { sortCol = col; sortDir = col === 'name' ? 1 : -1; }
+      document.getElementById('sort-select').value = sortCol;
+      updateSortIndicators();
+      renderTable();
+    };
+  });
+}
+
+/* ── Data fetching ── */
+async function loadStatus() {
+  try {
+    const s = await fetchJSON('/api/status');
+    _knownLastUpdated = s.last_updated;   // set baseline for change detection
+    _setBadge(s.last_updated ? `Data: ${s.last_updated}` : 'No data yet — click Refresh');
+    return s.last_updated;
+  } catch {
+    _setBadge('API offline');
+    return null;
+  }
+}
+
+async function loadAgencies() {
+  try {
+    allAgencies = await fetchJSON('/api/agencies');
+    updateCards();
+    renderBarCharts();
+    applyFilter();
+  } catch (err) {
+    document.getElementById('table-body').innerHTML =
+      `<tr><td colspan="6" class="loading" style="color:#c0392b">
+        Failed to load data. Is the server running?<br>
+        <small>${err.message}</small>
+       </td></tr>`;
+  }
+}
+
+async function loadDetail(agencyId) {
+  const [detail, history] = await Promise.all([
+    fetchJSON(`/api/agencies/${agencyId}`),
+    fetchJSON(`/api/agencies/${agencyId}/history`),
+  ]);
+  renderDetail(detail, history);
+}
+
+/* ── Background polling: always-on, detects any data change ─────────────────
+   Runs every 10 s passively. When the button is clicked it switches to fast
+   mode (3 s) with an animated badge. Either way, the page auto-reloads the
+   moment downloader.py finishes — whether triggered from the UI or terminal. */
+
+let _knownLastUpdated = null;   // set after first load
+let _downloading = false;       // true while button-triggered refresh is running
+
+function _setBadge(text) {
+  document.getElementById('status-badge').textContent = text;
+}
+
+async function _pollTick() {
+  try {
+    const s = await fetchJSON('/api/status');
+    const latest = s.last_updated;
+
+    if (_downloading) {
+      // animate dots while waiting for button-triggered refresh
+      const d = (_pollTick._dots = ((_pollTick._dots || 0) + 1) % 4);
+      _setBadge('Downloading' + '.'.repeat(d + 1));
+    }
+
+    // Data changed — reload everything regardless of how it happened
+    if (latest && latest !== _knownLastUpdated) {
+      _knownLastUpdated = latest;
+      _downloading = false;
+      _setBadge(`Data: ${latest} ✓`);
+      await loadAgencies();
+      if (selectedId) loadDetail(selectedId);
+      // Slow back down to background cadence
+      clearInterval(_fastTimer);
+      _fastTimer = null;
+    }
+  } catch { /* server busy — try again next tick */ }
+}
+
+// Slow background timer — always running
+let _fastTimer = null;
+setInterval(_pollTick, 15000);   // silent check every 15 s
+
+async function triggerRefresh() {
+  if (!confirm('This will re-download all eCFR data in the background. The page updates automatically when done. Continue?')) return;
+  await fetchJSON('/api/refresh', 'POST');
+  _downloading = true;
+  // Switch to fast polling while download runs
+  if (!_fastTimer) _fastTimer = setInterval(_pollTick, 3000);
+}
+
+async function fetchJSON(url, method = 'GET') {
+  const r = await fetch(url, { method });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+/* ── Summary cards ── */
+function updateCards() {
+  document.getElementById('c-agencies').textContent = allAgencies.length;
+  const totalWords = allAgencies.reduce((s, a) => s + (a.word_count || 0), 0);
+  document.getElementById('c-words').textContent = totalWords > 1e6
+    ? (totalWords / 1e6).toFixed(1) + 'M' : fmt(totalWords);
+  if (allAgencies.length) {
+    const largest = allAgencies[0];
+    document.getElementById('c-largest').textContent = largest.short_name || largest.name;
+    document.getElementById('c-largest-words').textContent =
+      fmt(largest.word_count) + ' words';
+    const volatile = [...allAgencies].sort((a,b) =>
+      (b.amendment_velocity||0) - (a.amendment_velocity||0))[0];
+    document.getElementById('c-volatile').textContent =
+      volatile.short_name || volatile.name;
+  }
+}
+
+/* ── Bar charts ── */
+function renderBarCharts() {
+  const top20 = allAgencies.slice(0, 20);
+  const labels = top20.map(a => a.short_name || a.name.substring(0, 30));
+  const BLUE = '#2563a8', ORANGE = '#d97706';
+
+  if (barChart) barChart.destroy();
+  barChart = new Chart(document.getElementById('bar-chart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{ label: 'Word Count', data: top20.map(a => a.word_count),
+        backgroundColor: BLUE, borderRadius: 3 }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ' ' + fmt(ctx.raw) + ' words' } } },
+      scales: { x: { ticks: { callback: v => v >= 1e6 ? (v/1e6).toFixed(1)+'M'
+                                                       : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v } },
+                y: { ticks: { font: { size: 10 } } } },
+    },
+  });
+
+  const aviTop = [...allAgencies]
+    .filter(a => a.amendment_velocity > 0)
+    .sort((a, b) => b.amendment_velocity - a.amendment_velocity)
+    .slice(0, 20);
+
+  if (aviChart) aviChart.destroy();
+  aviChart = new Chart(document.getElementById('avi-chart'), {
+    type: 'bar',
+    data: {
+      labels: aviTop.map(a => a.short_name || a.name.substring(0, 30)),
+      datasets: [{ label: 'AVI', data: aviTop.map(a => a.amendment_velocity),
+        backgroundColor: ORANGE, borderRadius: 3 }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ' ' + ctx.raw.toFixed(3) + ' amend/1k words' } } },
+      scales: { y: { ticks: { font: { size: 10 } } } },
+    },
+  });
+}
+
+/* ── Table ── */
+function applyFilter() {
+  const q = document.getElementById('search').value.toLowerCase();
+  filteredAgencies = q
+    ? allAgencies.filter(a => a.name.toLowerCase().includes(q))
+    : [...allAgencies];
+  renderTable();
+}
+
+function renderTable() {
+  const col = sortCol;
+  const sorted = [...filteredAgencies].sort((a, b) => {
+    const av = a[col] ?? (col === 'name' ? '' : -Infinity);
+    const bv = b[col] ?? (col === 'name' ? '' : -Infinity);
+    if (typeof av === 'string') return sortDir * av.localeCompare(bv);
+    return sortDir * (av - bv);
+  });
+  updateSortIndicators();
+
+  const maxWords = Math.max(...sorted.map(a => a.word_count || 0), 1);
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = sorted.map(a => {
+    const growth = a.word_count_growth_pct;
+    const badgeClass = growth == null ? 'flat' : growth > 0 ? 'up' : 'down';
+    const pct = growth == null ? '—' : fmtPct(growth);
+    const barW = Math.round((a.word_count / maxWords) * 100);
+    const sel = a.id === selectedId ? ' class="selected"' : '';
+    return `<tr${sel} onclick="selectAgency('${a.id}')">
+      <td class="agency-name">${escHtml(a.name)}</td>
+      <td class="number">
+        <span class="bar-bg"><span class="bar-fill" style="width:${barW}%"></span></span>
+        ${fmt(a.word_count)}
+      </td>
+      <td class="number">${a.amendment_velocity != null ? a.amendment_velocity.toFixed(3) : '—'}</td>
+      <td><span class="badge ${badgeClass}">${pct}</span></td>
+      <td class="mono" title="${a.checksum || ''}">${a.checksum ? a.checksum.substring(0,16)+'…' : '—'}</td>
+      <td>${a.snapshot_date || '—'}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" class="loading">No agencies match your search.</td></tr>';
+}
+
+function updateSortIndicators() {
+  document.querySelectorAll('thead th[data-col]').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.col === sortCol);
+    const arrow = th.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = th.dataset.col === sortCol
+      ? (sortDir === 1 ? '↑' : '↓') : '↕';
+  });
+}
+
+/* ── Agency detail ── */
+async function selectAgency(id) {
+  if (selectedId === id) {
+    selectedId = null;
+    document.getElementById('detail').style.display = 'none';
+    renderTable();
+    return;
+  }
+  selectedId = id;
+  renderTable();
+  document.getElementById('detail').style.display = 'block';
+  document.getElementById('detail-title').textContent = 'Loading…';
+  document.getElementById('detail-metrics').innerHTML = '';
+  try {
+    await loadDetail(id);
+    document.getElementById('detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (e) {
+    document.getElementById('detail-title').textContent = 'Error loading detail: ' + e.message;
+  }
+}
+
+function renderDetail(detail, history) {
+  document.getElementById('detail-title').textContent = detail.name;
+
+  const growth = detail.word_count_growth_pct;
+  const growthStr = growth == null ? '—' : fmtPct(growth);
+  const avi = detail.amendment_velocity != null ? detail.amendment_velocity.toFixed(3) : '—';
+
+  document.getElementById('detail-metrics').innerHTML = `
+    <div class="metric-box">
+      <div class="m-label">Word Count</div>
+      <div class="m-value">${fmt(detail.word_count)}</div>
+      <div class="m-desc">as of ${detail.snapshot_date || 'unknown'}</div>
+    </div>
+    <div class="metric-box">
+      <div class="m-label">Checksum (SHA-256)</div>
+      <div class="m-value" style="font-size:.75rem;font-family:monospace;word-break:break-all">
+        ${detail.checksum || '—'}
+      </div>
+      <div class="m-desc">changes if any byte in XML changes</div>
+    </div>
+    <div class="metric-box">
+      <div class="m-label">Amendment Velocity</div>
+      <div class="m-value">${avi}</div>
+      <div class="m-desc">amendments per 1k words/yr</div>
+    </div>
+    <div class="metric-box">
+      <div class="m-label">Word Count Growth</div>
+      <div class="m-value" style="color:${growth > 0 ? 'var(--red)' : growth < 0 ? 'var(--green)' : 'inherit'}">${growthStr}</div>
+      <div class="m-desc">since earliest snapshot</div>
+    </div>
+    <div class="metric-box">
+      <div class="m-label">CFR Titles Covered</div>
+      <div class="m-value">${(detail.title_nums || []).join(', ') || '—'}</div>
+      <div class="m-desc">Title numbers in eCFR</div>
+    </div>
+  `;
+
+  // history line chart
+  if (historyChart) historyChart.destroy();
+  historyChart = new Chart(document.getElementById('history-chart'), {
+    type: 'line',
+    data: {
+      labels: history.map(h => h.date),
+      datasets: [{
+        label: 'Word Count',
+        data: history.map(h => h.word_count),
+        borderColor: '#2563a8',
+        backgroundColor: 'rgba(37,99,168,.08)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.3,
+        pointRadius: 5,
+        pointBackgroundColor: '#2563a8',
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ' ' + fmt(ctx.raw) + ' words' } } },
+      scales: {
+        y: { ticks: { callback: v => v >= 1e6 ? (v/1e6).toFixed(1)+'M'
+                                               : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v } }
+      },
+    },
+  });
+}
+
+/* ── Utils ── */
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+init();
+</script>
+</body>
+</html>
