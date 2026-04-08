@@ -236,6 +236,11 @@ const fmtPct = v => v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(1) + '%';
 async function init() {
   await loadStatus();
   await loadAgencies();
+  // If a refresh was already running when the page loaded, jump into fast polling
+  try {
+    const r = await fetchJSON('/api/refresh/status');
+    if (r.running) { _downloading = true; if (!_fastTimer) _fastTimer = setInterval(_pollTick, 3000); }
+  } catch { /* ignore */ }
   document.getElementById('refresh-btn').onclick = triggerRefresh;
   document.getElementById('search').oninput = applyFilter;
   document.getElementById('sort-select').onchange = e => {
@@ -308,8 +313,19 @@ async function _pollTick() {
     const s = await fetchJSON('/api/status');
     const latest = s.last_updated;
 
+    // Check if downloader is still running on the server
+    try {
+      const rs = await fetchJSON('/api/refresh/status');
+      if (rs.running) {
+        _downloading = true;
+        if (!_fastTimer) _fastTimer = setInterval(_pollTick, 3000);
+      } else if (_downloading) {
+        // Process just finished — will catch the data change below
+        _downloading = false;
+      }
+    } catch { /* ignore */ }
+
     if (_downloading) {
-      // animate dots while waiting for button-triggered refresh
       const d = (_pollTick._dots = ((_pollTick._dots || 0) + 1) % 4);
       _setBadge('Downloading' + '.'.repeat(d + 1));
     }
@@ -321,7 +337,6 @@ async function _pollTick() {
       _setBadge(`Data: ${latest} ✓`);
       await loadAgencies();
       if (selectedId) loadDetail(selectedId);
-      // Slow back down to background cadence
       clearInterval(_fastTimer);
       _fastTimer = null;
     }

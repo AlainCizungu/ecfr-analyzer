@@ -4,6 +4,7 @@ api.py — FastAPI application exposing eCFR analysis endpoints.
 Start with:  uvicorn api:app --reload
              uvicorn api:app --host 0.0.0.0 --port 8000
 """
+import os
 import subprocess
 import sys
 import time
@@ -129,17 +130,37 @@ def get_history(agency_id: str):
 
 # ─── Refresh ──────────────────────────────────────────────────────────────────
 
-def _run_downloader():
-    _bust_cache()                                        # clear stale data immediately
-    subprocess.run([sys.executable, "downloader.py"], check=False)
-    _bust_cache()                                        # clear again so next request is fresh
+# Absolute path to downloader.py — works correctly inside Docker on Render
+DOWNLOADER = str(Path(__file__).parent / "downloader.py")
+_refresh_process: subprocess.Popen | None = None
+
+
+def _is_running() -> bool:
+    return _refresh_process is not None and _refresh_process.poll() is None
 
 
 @app.post("/api/refresh", summary="Trigger a background data refresh")
-def refresh(background_tasks: BackgroundTasks):
+def refresh():
     """
-    Runs downloader.py in the background. The frontend polls /api/status every
-    3 s and reloads all charts automatically when last_updated changes.
+    Spawns downloader.py as a detached subprocess (Popen, not run) so it
+    keeps running independently regardless of request timeouts. The frontend
+    polls /api/status every 3 s and auto-reloads when last_updated changes.
     """
-    background_tasks.add_task(_run_downloader)
+    global _refresh_process
+    if _is_running():
+        return {"status": "already running"}
+
+    _bust_cache()
+    _refresh_process = subprocess.Popen(
+        [sys.executable, DOWNLOADER],
+        env={**os.environ},                   # inherit DB_PATH and all env vars
+        cwd=str(Path(__file__).parent),       # run from /app inside Docker
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
     return {"status": "refresh started"}
+
+
+@app.get("/api/refresh/status", summary="Check if a refresh is running")
+def refresh_status():
+    return {"running": _is_running()}
