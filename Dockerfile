@@ -20,4 +20,4 @@ CMD ["sh", "-c", "\
   if [ ! -f /data/ecfr.db ]; then \
     echo 'First boot: seeding database…' && python seed_data.py; \
   fi && \
-  uvicorn api:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2"]
+  uvicorn api:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]

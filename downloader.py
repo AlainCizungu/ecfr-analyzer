@@ -41,7 +41,7 @@ TIMEOUT = 120
 HEADERS = {"User-Agent": "eCFR-Analyzer/1.0 (educational project)"}
 
 LARGE_TITLE_WORDS = 5_000_000  # skip historical if current snapshot exceeds this
-MAX_WORKERS       = 4          # parallel title downloads
+MAX_WORKERS       = 2          # parallel title downloads — kept low to stay under 512 MB RAM
 
 _db_lock = threading.Lock()    # serialises all SQLite writes across threads
 
@@ -178,17 +178,21 @@ def _write_versions(title_num: int, dates: list[str]) -> None:
 # ─── Per-title worker (runs in thread pool) ───────────────────────────────────
 
 def process_title(tnum: int, sample_dates: list[str],
-                  version_cache: dict, title_meta: dict) -> dict[str, tuple[str, str, int]]:
+                  version_cache: dict, title_meta: dict) -> dict[str, tuple[str, int]]:
     """
-    Fetch snapshots for one title. Returns {date: (text, checksum, word_count)}.
+    Fetch snapshots for one title. Returns {date: (checksum, word_count)}.
+
+    Text is never kept in memory after word count is computed — titles like
+    EPA (16.9 M words) and IRS (10.2 M words) would otherwise consume hundreds
+    of MB each and crash the 512 MB Render container.
 
     Logic:
       1. Always fetch the current snapshot.
       2. Compare checksum with stored value — if unchanged, skip historical.
       3. If current snapshot > LARGE_TITLE_WORDS, skip historical (server can't serve it).
-      4. Otherwise fetch historical dates in parallel with the rest of the pool.
+      4. Otherwise fetch historical dates.
     """
-    results: dict[str, tuple[str, str, int]] = {}
+    results: dict[str, tuple[str, int]] = {}   # {date: (checksum, word_count)}
     available = sorted(version_cache.get(tnum, []))
     fallback  = title_meta.get(tnum, {}).get("latest_issue_date", date.today().isoformat())
 
@@ -204,10 +208,10 @@ def process_title(tnum: int, sample_dates: list[str],
     if xml is None:
         return results
 
-    text = xml_to_text(xml)
-    chk  = sha256_hex(xml)
-    wc   = word_count(text)
-    results[current_target] = (text, chk, wc)
+    chk = sha256_hex(xml)
+    wc  = word_count(xml_to_text(xml))
+    del xml                          # free raw bytes immediately — large titles use 100 MB+
+    results[current_target] = (chk, wc)
 
     with _db_lock:
         upsert_title_snapshot(tnum, current_target, wc, chk)
@@ -242,10 +246,10 @@ def process_title(tnum: int, sample_dates: list[str],
         if xml_h is None:
             continue
 
-        text_h = xml_to_text(xml_h)
-        chk_h  = sha256_hex(xml_h)
-        wc_h   = word_count(text_h)
-        results[target] = (text_h, chk_h, wc_h)
+        chk_h = sha256_hex(xml_h)
+        wc_h  = word_count(xml_to_text(xml_h))
+        del xml_h                    # free raw bytes immediately
+        results[target] = (chk_h, wc_h)
 
         with _db_lock:
             upsert_title_snapshot(tnum, target, wc_h, chk_h)
@@ -295,7 +299,7 @@ def download(title_filter: set[int] | None = None, history: bool = True) -> None
 
     # ── Parallel title downloads ───────────────────────────────────────────────
     log.info("Downloading title text (%d workers)…", MAX_WORKERS)
-    title_text: dict[int, dict[str, tuple[str, str, int]]] = {}
+    title_text: dict[int, dict[str, tuple[str, int]]] = {}   # {tnum: {date: (checksum, wc)}}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futures = {
@@ -337,7 +341,7 @@ def download(title_filter: set[int] | None = None, history: bool = True) -> None
                 if nearest and abs(
                     (datetime.fromisoformat(nearest) - datetime.fromisoformat(sample)).days
                 ) <= 60:
-                    _text, chk, wc = cache[nearest]
+                    chk, wc = cache[nearest]
                     total_words += wc
                     combined_hash.update(chk.encode())
                     covered.append(tnum)
