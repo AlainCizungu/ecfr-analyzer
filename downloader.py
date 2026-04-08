@@ -17,12 +17,10 @@ import concurrent.futures
 import hashlib
 import json
 import logging
-import re
 import sys
 import threading
 import time
 from datetime import date, timedelta, datetime
-from xml.etree import ElementTree as ET
 
 import requests
 
@@ -41,7 +39,7 @@ TIMEOUT = 120
 HEADERS = {"User-Agent": "eCFR-Analyzer/1.0 (educational project)"}
 
 LARGE_TITLE_WORDS = 5_000_000  # skip historical if current snapshot exceeds this
-MAX_WORKERS       = 2          # parallel title downloads — kept low to stay under 512 MB RAM
+MAX_WORKERS       = 1          # sequential — one title at a time keeps peak RAM under 150 MB
 
 _db_lock = threading.Lock()    # serialises all SQLite writes across threads
 
@@ -102,21 +100,36 @@ def fetch_title_xml(title_num: int, iso_date: str) -> bytes | None:
 
 # ─── Text / metric helpers ────────────────────────────────────────────────────
 
-def xml_to_text(xml_bytes: bytes) -> str:
-    try:
-        root = ET.fromstring(xml_bytes)
-        parts = [
-            s.strip() for elem in root.iter()
-            for s in (elem.text or "", elem.tail or "")
-            if s.strip()
-        ]
-        return " ".join(parts)
-    except ET.ParseError:
-        return re.sub(r"<[^>]+>", " ", xml_bytes.decode("utf-8", errors="ignore"))
+def count_words_in_xml(xml_bytes: bytes) -> int:
+    """
+    Count whitespace-delimited words in an XML document WITHOUT building a
+    text string or a split() list.
 
+    For Title 40 (EPA, 16.9 M words) the old approach was:
+      xml_to_text()  → ~100 MB Python string
+      text.split()   → list of 16.9 M Python str objects  ≈ 850 MB
+    Total peak: ~950 MB — guaranteed OOM on a 512 MB container.
 
-def word_count(text: str) -> int:
-    return len(text.split())
+    This implementation streams through the raw bytes once with O(1) extra
+    memory: only a handful of boolean/int locals, no intermediate structures.
+    """
+    count = 0
+    in_tag = False
+    in_word = False
+    for b in xml_bytes:
+        if in_tag:
+            if b == 62:          # ord('>')
+                in_tag = False
+                in_word = False  # treat tag boundary as whitespace
+        elif b == 60:            # ord('<')
+            in_tag = True
+            in_word = False
+        elif b in (32, 9, 10, 13):   # space, tab, LF, CR
+            in_word = False
+        elif not in_word:
+            in_word = True
+            count += 1
+    return count
 
 
 def sha256_hex(data: bytes) -> str:
@@ -209,7 +222,7 @@ def process_title(tnum: int, sample_dates: list[str],
         return results
 
     chk = sha256_hex(xml)
-    wc  = word_count(xml_to_text(xml))
+    wc  = count_words_in_xml(xml)
     del xml                          # free raw bytes immediately — large titles use 100 MB+
     results[current_target] = (chk, wc)
 
@@ -247,7 +260,7 @@ def process_title(tnum: int, sample_dates: list[str],
             continue
 
         chk_h = sha256_hex(xml_h)
-        wc_h  = word_count(xml_to_text(xml_h))
+        wc_h  = count_words_in_xml(xml_h)
         del xml_h                    # free raw bytes immediately
         results[target] = (chk_h, wc_h)
 
