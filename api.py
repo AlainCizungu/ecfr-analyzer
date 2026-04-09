@@ -140,25 +140,34 @@ def _is_running() -> bool:
 
 
 @app.post("/api/refresh", summary="Trigger a background data refresh")
-def refresh():
+def refresh(history: bool = False):
     """
     Spawns downloader.py as a detached subprocess (Popen, not run) so it
     keeps running independently regardless of request timeouts. The frontend
     polls /api/status every 3 s and auto-reloads when last_updated changes.
+
+    history=False (default): ~15–30 min — fetches current snapshot only.
+    history=True           : ~90–120 min — also fetches historical snapshots
+                             for trend charts (only needed once; checksums skip
+                             unchanged titles on subsequent runs).
     """
     global _refresh_process
     if _is_running():
         return {"status": "already running"}
 
     _bust_cache()
+    cmd = [sys.executable, DOWNLOADER]
+    if not history:
+        cmd.append("--no-history")
+
     _refresh_process = subprocess.Popen(
-        [sys.executable, DOWNLOADER],
+        cmd,
         env={**os.environ},                   # inherit DB_PATH and all env vars
         cwd=str(Path(__file__).parent),       # run from /app inside Docker
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-    return {"status": "refresh started"}
+    return {"status": "refresh started", "history": history}
 
 
 @app.get("/api/refresh/status", summary="Check if a refresh is running")

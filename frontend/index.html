@@ -140,7 +140,8 @@
   <h1>⚖️ eCFR Federal Regulations Analyzer</h1>
   <div style="display:flex;align-items:center;gap:10px">
     <span id="status-badge">Loading…</span>
-    <button id="refresh-btn" title="Re-download all eCFR data (takes several minutes)">↻ Refresh Data</button>
+    <button id="refresh-btn"      title="Fetch current regulation text (~15–30 min)">↻ Quick Refresh</button>
+    <button id="refresh-full-btn" title="Fetch current + historical data for trend charts (~90 min)" style="font-size:.78rem;border:1px solid rgba(255,255,255,.3);background:transparent;color:rgba(255,255,255,.7);padding:4px 10px;border-radius:4px;cursor:pointer;">⏳ Full Refresh</button>
   </div>
 </header>
 
@@ -241,7 +242,8 @@ async function init() {
     const r = await fetchJSON('/api/refresh/status');
     if (r.running) { _downloading = true; if (!_fastTimer) _fastTimer = setInterval(_pollTick, 3000); }
   } catch { /* ignore */ }
-  document.getElementById('refresh-btn').onclick = triggerRefresh;
+  document.getElementById('refresh-btn').onclick      = () => triggerRefresh(false);
+  document.getElementById('refresh-full-btn').onclick = () => triggerRefresh(true);
   document.getElementById('search').oninput = applyFilter;
   document.getElementById('sort-select').onchange = e => {
     sortCol = e.target.value;
@@ -347,11 +349,14 @@ async function _pollTick() {
 let _fastTimer = null;
 setInterval(_pollTick, 15000);   // silent check every 15 s
 
-async function triggerRefresh() {
-  if (!confirm('This will re-download all eCFR data in the background. The page updates automatically when done. Continue?')) return;
-  await fetchJSON('/api/refresh', 'POST');
+async function triggerRefresh(withHistory = false) {
+  const label = withHistory
+    ? 'Full Refresh will download current + historical data for all ~50 titles.\nExpect ~90 minutes. The page updates automatically when done.\nContinue?'
+    : 'Quick Refresh downloads the latest regulation text for all ~50 titles.\nExpect ~15–30 minutes. The page updates automatically when done.\nContinue?';
+  if (!confirm(label)) return;
+  const url = withHistory ? '/api/refresh?history=true' : '/api/refresh';
+  await fetchJSON(url, 'POST');
   _downloading = true;
-  // Switch to fast polling while download runs
   if (!_fastTimer) _fastTimer = setInterval(_pollTick, 3000);
 }
 
